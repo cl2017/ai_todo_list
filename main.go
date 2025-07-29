@@ -1,11 +1,15 @@
 package main
 
 import (
+	"context"
 	"encoding/json"
 	"fmt"
+	"github.com/mark3labs/mcp-go/server"
 	"log"
 	"net/http"
+	"os/signal"
 	"strconv"
+	"syscall"
 	"time"
 
 	"github.com/gorilla/mux"
@@ -54,7 +58,7 @@ type AIResponse struct {
 }
 
 // 全局数据库实例
-var db *SimpleDatabase
+var db *SQLiteDatabase
 
 func getTodos(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Type", "application/json")
@@ -280,22 +284,27 @@ func getUserProfile(w http.ResponseWriter, r *http.Request) {
 	json.NewEncoder(w).Encode(profile)
 }
 
+// HTTP请求日志中间件
+func loggingMiddleware(next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		log.Printf("%s %s %s", r.RemoteAddr, r.Method, r.URL.Path)
+		next.ServeHTTP(w, r)
+	})
+}
+
 func main() {
 	// 初始化数据库
 	var err error
-	db, err = NewSimpleDatabase()
+	db, err = NewSQLiteDatabase()
 	if err != nil {
-		log.Fatalf("Failed to initialize database: %v", err)
+		log.Fatalf("Failed to initialize SQLite database: %v", err)
 	}
 	defer db.Close()
 
 	// 导入初始数据
-	if err := db.ImportFromJSON("data.json"); err != nil {
-		log.Printf("Warning: Failed to import data from data.json: %v", err)
-	}
-
-	// Initialize MCP Server
-	mcpServer := NewMCPServer(db)
+	//if err := db.ImportFromJSON("data.json"); err != nil {
+	//	log.Printf("Warning: Failed to import data from data.json: %v", err)
+	//}
 
 	r := mux.NewRouter()
 
@@ -308,13 +317,6 @@ func main() {
 	// AI/MCP routes
 	r.HandleFunc("/api/ai/analyze", aiAnalyzeTasks).Methods("GET")
 	r.HandleFunc("/api/ai/optimize", aiOptimizeSchedule).Methods("GET")
-
-	// MCP HTTP API endpoints
-	r.HandleFunc("/mcp/initialize", mcpServer.HandleInitialize).Methods("POST")
-	r.HandleFunc("/mcp/tools/list", mcpServer.HandleToolsList).Methods("GET")
-	r.HandleFunc("/mcp/tools/call", mcpServer.HandleToolCall).Methods("POST")
-	r.HandleFunc("/mcp/ping", mcpServer.HandlePing).Methods("GET")
-	r.HandleFunc("/mcp/shutdown", mcpServer.HandleShutdown).Methods("POST")
 
 	// User profile route
 	r.HandleFunc("/api/profile", getUserProfile).Methods("GET")
@@ -331,6 +333,24 @@ func main() {
 
 	handler := c.Handler(r)
 
+	// 添加日志中间件
+	handler = loggingMiddleware(handler)
+
+	// 新建mcp server
+	s := server.NewMCPServer(
+		"go-mcp-todo-list",
+		"1.0.0",
+		server.WithResourceCapabilities(true, true),
+		server.WithLogging(),
+		server.WithRecovery(),
+	)
+
+	RegisterTodoTools(s, db)
+
+	if err := serveSSE(s); err != nil {
+		fmt.Printf("Server error: %v\n", err)
+	}
+
 	fmt.Println("🚀 AI智能待办助手服务器启动成功!")
 	fmt.Println("📍 访问地址: http://localhost:8081")
 	fmt.Println("🤖 AI分析功能已启用")
@@ -340,4 +360,29 @@ func main() {
 	fmt.Println("   - GET  /mcp/tools/list")
 	fmt.Println("   - POST /mcp/tools/call")
 	log.Fatal(http.ListenAndServe(":8081", handler))
+}
+
+func serveSSE(s *server.MCPServer) error {
+	_, stop := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
+	defer stop()
+
+	srv := server.NewSSEServer(s)
+
+	mux := http.NewServeMux()
+
+	mux.Handle("/sse", srv)
+
+	mux.Handle("/message", srv)
+
+	httpServer := &http.Server{
+		Addr:    "localhost:8082",
+		Handler: mux,
+	}
+
+	go func() {
+		if err := httpServer.ListenAndServe(); err != nil && err != http.ErrServerClosed {
+			log.Fatal(err)
+		}
+	}()
+	return nil
 }

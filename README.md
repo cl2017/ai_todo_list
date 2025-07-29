@@ -21,8 +21,8 @@
 
 ## 技术栈
 
-- **语言**: Go 1.22.2
-- **数据库**: 内存存储 (避免CGO依赖)
+- **语言**: Go 1.23
+- **数据库**: SQLite3 (存储在当前目录)
 - **Web框架**: Gorilla Mux
 - **协议**: HTTP REST API
 - **数据格式**: JSON
@@ -123,16 +123,16 @@ curl -X POST http://localhost:8081/mcp/tools/call \
 
 ## 数据存储
 
-### 内存数据库结构
-- **todos**: 待办事项列表
-- **userProfile**: 用户配置信息
-- **线程安全**: 使用读写锁保证并发安全
+### SQLite数据库结构
+- **todos表**: 存储待办事项列表
+- **user_profile表**: 存储用户配置信息
+- **持久化**: 数据存储在当前目录的todos.db文件中
 
 ### 数据流程
-1. 启动时从data.json导入初始数据到内存
-2. 所有CRUD操作通过内存数据库进行
+1. 启动时从data.json导入初始数据到SQLite数据库
+2. 所有CRUD操作通过SQLite数据库进行
 3. MCP工具调用通过HTTP API处理
-4. 数据在程序运行期间保持在内存中
+4. 数据持久化保存在todos.db文件中
 
 ## 项目结构
 
@@ -156,10 +156,11 @@ fydeos/
 3. **数据持久化**: 所有操作都在内存中进行
 4. **MCP协议**: 实现标准的MCP协议工具
 
-### 解决CGO问题
-由于SQLite驱动需要CGO支持，我们提供了两种解决方案：
-1. **内存数据库**: 默认使用，无需CGO
-2. **SQLite数据库**: 需要启用CGO (`CGO_ENABLED=1`)
+### 关于CGO
+本项目使用SQLite数据库，需要启用CGO支持：
+1. 在Windows系统上，需要安装GCC编译器（例如通过MinGW或MSYS2）
+2. 在编译时需要设置环境变量 `CGO_ENABLED=1`
+3. 如果遇到CGO相关问题，请参考go-sqlite3文档[[1]](https://pkg.go.dev/github.com/mattn/go-sqlite3)
 
 ### 数据流程
 1. 启动时从data.json导入初始数据到内存
