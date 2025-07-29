@@ -13,9 +13,7 @@ import (
 
 func main() {
 	// 初始化数据库
-	var err error
-	_, err = db.NewSQLiteDatabase()
-	if err != nil {
+	if _, err := db.NewSQLiteDatabase(); err != nil {
 		log.Fatalf("Failed to initialize SQLite database: %v", err)
 	}
 	defer db.DB.Close()
@@ -24,13 +22,11 @@ func main() {
 	mcp.InitMCP()
 
 	r := mux.NewRouter()
-
 	// API routes
 	r.HandleFunc("/api/todos", api.GetTodos).Methods("GET")
 	r.HandleFunc("/api/todos", api.CreateTodo).Methods("POST")
 	r.HandleFunc("/api/todos/{id}", api.UpdateTodo).Methods("PUT")
 	r.HandleFunc("/api/todos/{id}", api.DeleteTodo).Methods("DELETE")
-
 	r.HandleFunc("/api/ai/analyze", api.AiAnalyzeTasks).Methods("GET")
 	r.HandleFunc("/api/ai/optimize", api.AiOptimizeSchedule).Methods("GET")
 

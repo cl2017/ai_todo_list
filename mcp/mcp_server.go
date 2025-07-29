@@ -54,15 +54,15 @@ func serveSSE(s *server.MCPServer) error {
 	return nil
 }
 
-// 注册所有 todo 相关工具到 mcp-go server
+// 注册所有相关工具
 func RegisterTodoTools(s *server.MCPServer, sqlite *db.SQLiteDatabase) {
 	// list_todos
 	s.AddTool(mcp.NewTool(
 		"list_todos",
 		mcp.WithDescription("列出所有待办事项，支持过滤"),
+		// 无需参数定义
 	), func(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
 		todo, _ := sqlite.GetAllTodos()
-
 		return mcp.NewToolResultStructuredOnly(todo), nil
 	})
 
@@ -70,11 +70,26 @@ func RegisterTodoTools(s *server.MCPServer, sqlite *db.SQLiteDatabase) {
 	s.AddTool(mcp.NewTool(
 		"create_todo",
 		mcp.WithDescription("创建新的待办事项"),
+		mcp.WithString("title",
+			mcp.Required(),
+			mcp.Description("标题"),
+		),
+		mcp.WithString("description",
+			mcp.Description("描述"),
+		),
+		mcp.WithString("priority",
+			mcp.Description("优先级（urgent/high/medium/low）"),
+			mcp.Enum("urgent", "high", "medium", "low"),
+		),
+		mcp.WithString("category",
+			mcp.Description("类别"),
+		),
+		mcp.WithString("estimated_duration",
+			mcp.Description("预计耗时"),
+		),
 	), func(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
-		title := req.GetString("title", "")
-
 		todo := &db.Todo{
-			Title:             title,
+			Title:             req.GetString("title", ""),
 			Description:       req.GetString("description", ""),
 			Priority:          req.GetString("priority", ""),
 			Category:          req.GetString("category", ""),
@@ -100,6 +115,24 @@ func RegisterTodoTools(s *server.MCPServer, sqlite *db.SQLiteDatabase) {
 	s.AddTool(mcp.NewTool(
 		"update_todo",
 		mcp.WithDescription("更新现有待办事项"),
+		mcp.WithNumber("id",
+			mcp.Required(),
+			mcp.Description("待办事项ID"),
+		),
+		mcp.WithString("title",
+			mcp.Description("标题"),
+		),
+		mcp.WithString("description",
+			mcp.Description("描述"),
+		),
+		mcp.WithString("priority",
+			mcp.Description("优先级"),
+			mcp.Enum("urgent", "high", "medium", "low"),
+		),
+		mcp.WithString("status",
+			mcp.Description("状态"),
+			mcp.Enum("pending", "in_progress", "completed"),
+		),
 	), func(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
 		id := req.GetFloat("id", 0)
 		todo, err := sqlite.GetTodoByID(int(id))
@@ -122,7 +155,10 @@ func RegisterTodoTools(s *server.MCPServer, sqlite *db.SQLiteDatabase) {
 	s.AddTool(mcp.NewTool(
 		"delete_todo",
 		mcp.WithDescription("删除待办事项"),
-	), func(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+		mcp.WithNumber("id",
+			mcp.Required(),
+			mcp.Description("待办事项ID"),
+		)), func(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
 		idFloat := req.GetFloat("id", 0)
 		id := int(idFloat)
 		todo, err := sqlite.GetTodoByID(id)
@@ -133,154 +169,5 @@ func RegisterTodoTools(s *server.MCPServer, sqlite *db.SQLiteDatabase) {
 			return nil, err
 		}
 		return mcp.NewToolResultText(fmt.Sprintf("Deleted todo: %s (ID: %d)", todo.Title, todo.ID)), nil
-	})
-
-	// analyze_tasks
-	s.AddTool(mcp.NewTool(
-		"analyze_tasks",
-		mcp.WithDescription("智能分析任务状态"),
-	), func(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
-		analysisType := req.GetString("analysis_type", "")
-		if analysisType == "" {
-			analysisType = "priority"
-		}
-		todos, err := sqlite.GetAllTodos()
-		if err != nil {
-			return nil, err
-		}
-		var analysis string
-		switch analysisType {
-		case "priority":
-			urgent, high, medium, low := 0, 0, 0, 0
-			for _, todo := range todos {
-				switch todo.Priority {
-				case "urgent":
-					urgent++
-				case "high":
-					high++
-				case "medium":
-					medium++
-				case "low":
-					low++
-				}
-			}
-			analysis = fmt.Sprintf("Priority Analysis: Urgent: %d, High: %d, Medium: %d, Low: %d", urgent, high, medium, low)
-		case "overdue":
-			overdue := 0
-			now := time.Now()
-			for _, todo := range todos {
-				if todo.DueDate != nil && todo.DueDate.Before(now) && todo.Status != "completed" {
-					overdue++
-				}
-			}
-			analysis = fmt.Sprintf("Overdue Analysis: %d tasks are overdue", overdue)
-		case "stale":
-			stale := 0
-			now := time.Now()
-			for _, todo := range todos {
-				if now.Sub(todo.LastUpdated).Hours() > 24*30 {
-					stale++
-				}
-			}
-			analysis = fmt.Sprintf("Stale Analysis: %d tasks haven't been updated in 30+ days", stale)
-		case "workload":
-			pending, inProgress, completed := 0, 0, 0
-			for _, todo := range todos {
-				switch todo.Status {
-				case "pending":
-					pending++
-				case "in_progress":
-					inProgress++
-				case "completed":
-					completed++
-				}
-			}
-			analysis = fmt.Sprintf("Workload Analysis: Pending: %d, In Progress: %d, Completed: %d", pending, inProgress, completed)
-		}
-		return mcp.NewToolResultText(analysis), nil
-	})
-
-	// optimize_schedule
-	s.AddTool(mcp.NewTool(
-		"optimize_schedule",
-		mcp.WithDescription("优化工作日程"),
-	), func(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
-		timeHorizon := req.GetString("time_horizon", "")
-		if timeHorizon == "" {
-			timeHorizon = "today"
-		}
-		workHours := 8
-		workHours = int(req.GetFloat("work_hours", 8))
-		todos, err := sqlite.GetAllTodos()
-		if err != nil {
-			return nil, err
-		}
-		var priorityTasks []db.Todo
-		for _, todo := range todos {
-			if (todo.Status == "pending" || todo.Status == "in_progress") &&
-				(todo.Priority == "urgent" || todo.Priority == "high") {
-				priorityTasks = append(priorityTasks, todo)
-			}
-		}
-		optimization := fmt.Sprintf("Schedule Optimization for %s (%d work hours):\n", timeHorizon, workHours)
-		optimization += fmt.Sprintf("Found %d high-priority tasks to schedule\n", len(priorityTasks))
-		optimization += "Recommendations:\n"
-		optimization += "- Start with urgent tasks in the morning when energy is highest\n"
-		optimization += "- Group similar tasks together for efficiency\n"
-		optimization += "- Schedule breaks between complex tasks\n"
-		optimization += "- Reserve buffer time for unexpected issues"
-		return mcp.NewToolResultText(optimization), nil
-	})
-
-	// break_down_task
-	s.AddTool(mcp.NewTool(
-		"break_down_task",
-		mcp.WithDescription("将复杂任务分解为子任务"),
-	), func(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
-		idFloat := req.GetFloat("task_id", 0)
-
-		taskID := int(idFloat)
-		complexity := req.GetString("complexity", "")
-		if complexity == "" {
-			complexity = "medium"
-		}
-		todo, err := sqlite.GetTodoByID(taskID)
-		if err != nil {
-			return nil, fmt.Errorf("task with ID %d not found", taskID)
-		}
-		breakdown := fmt.Sprintf("Task Breakdown for: %s\n", todo.Title)
-		breakdown += fmt.Sprintf("Complexity: %s\n\n", complexity)
-		breakdown += "Suggested subtasks:\n"
-		if todo.Title == "Prepare Q3 presentation for Friday meeting" {
-			breakdown += "1. Research and gather Q3 data (2 hours)\n"
-			breakdown += "2. Create presentation outline (30 minutes)\n"
-			breakdown += "3. Design slides and visuals (3 hours)\n"
-			breakdown += "4. Review content with team (1 hour)\n"
-			breakdown += "5. Practice presentation delivery (1 hour)\n"
-			breakdown += "6. Prepare for Q&A session (30 minutes)\n"
-		} else {
-			switch complexity {
-			case "simple":
-				breakdown += "1. Plan the task (15 minutes)\n"
-				breakdown += "2. Execute the main work (1-2 hours)\n"
-				breakdown += "3. Review and finalize (15 minutes)\n"
-			case "medium":
-				breakdown += "1. Research and planning (30 minutes)\n"
-				breakdown += "2. Break into smaller components (15 minutes)\n"
-				breakdown += "3. Execute main work (2-4 hours)\n"
-				breakdown += "4. Review and iterate (30 minutes)\n"
-				breakdown += "5. Final quality check (15 minutes)\n"
-			case "complex":
-				breakdown += "1. Comprehensive research (1-2 hours)\n"
-				breakdown += "2. Create detailed plan (30 minutes)\n"
-				breakdown += "3. Identify dependencies (30 minutes)\n"
-				breakdown += "4. Execute phase 1 (2-3 hours)\n"
-				breakdown += "5. Review and adjust plan (30 minutes)\n"
-				breakdown += "6. Execute phase 2 (2-3 hours)\n"
-				breakdown += "7. Integration and testing (1 hour)\n"
-				breakdown += "8. Final review and documentation (1 hour)\n"
-			}
-		}
-		return mcp.NewToolResultText(breakdown), nil
 	})
 }
