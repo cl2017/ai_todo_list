@@ -4,10 +4,6 @@ import (
 	"context"
 	"fmt"
 	"fydeos/db"
-	"log"
-	"net/http"
-	"os/signal"
-	"syscall"
 	"time"
 
 	"github.com/mark3labs/mcp-go/mcp"
@@ -24,34 +20,8 @@ func InitMCP() {
 
 	RegisterTodoTools(s, db.DB)
 
-	if err := serveSSE(s); err != nil {
-		fmt.Printf("Server error: %v\n", err)
-	}
-}
-
-func serveSSE(s *server.MCPServer) error {
-	_, stop := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
-	defer stop()
-
 	srv := server.NewSSEServer(s)
-
-	mux := http.NewServeMux()
-
-	mux.Handle("/sse", srv)
-
-	mux.Handle("/message", srv)
-
-	httpServer := &http.Server{
-		Addr:    "localhost:8082",
-		Handler: mux,
-	}
-
-	go func() {
-		if err := httpServer.ListenAndServe(); err != nil && err != http.ErrServerClosed {
-			log.Fatal(err)
-		}
-	}()
-	return nil
+	go srv.Start("localhost:8082")
 }
 
 // 注册所有相关工具
