@@ -1,22 +1,67 @@
-package main
+package mcp
 
 import (
 	"context"
 	"fmt"
+	"fydeos/db"
+	"log"
+	"net/http"
+	"os/signal"
+	"syscall"
 	"time"
 
 	"github.com/mark3labs/mcp-go/mcp"
 	"github.com/mark3labs/mcp-go/server"
 )
 
+func InitMCP() {
+	s := server.NewMCPServer(
+		"go-mcp-todo-list",
+		"1.0.0",
+		server.WithLogging(),
+		server.WithRecovery(),
+	)
+
+	RegisterTodoTools(s, db.DB)
+
+	if err := serveSSE(s); err != nil {
+		fmt.Printf("Server error: %v\n", err)
+	}
+}
+
+func serveSSE(s *server.MCPServer) error {
+	_, stop := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
+	defer stop()
+
+	srv := server.NewSSEServer(s)
+
+	mux := http.NewServeMux()
+
+	mux.Handle("/sse", srv)
+
+	mux.Handle("/message", srv)
+
+	httpServer := &http.Server{
+		Addr:    "localhost:8082",
+		Handler: mux,
+	}
+
+	go func() {
+		if err := httpServer.ListenAndServe(); err != nil && err != http.ErrServerClosed {
+			log.Fatal(err)
+		}
+	}()
+	return nil
+}
+
 // 注册所有 todo 相关工具到 mcp-go server
-func RegisterTodoTools(s *server.MCPServer, db *SQLiteDatabase) {
+func RegisterTodoTools(s *server.MCPServer, sqlite *db.SQLiteDatabase) {
 	// list_todos
 	s.AddTool(mcp.NewTool(
 		"list_todos",
 		mcp.WithDescription("列出所有待办事项，支持过滤"),
 	), func(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
-		todo, _ := db.GetAllTodos()
+		todo, _ := sqlite.GetAllTodos()
 
 		return mcp.NewToolResultStructuredOnly(todo), nil
 	})
@@ -28,7 +73,7 @@ func RegisterTodoTools(s *server.MCPServer, db *SQLiteDatabase) {
 	), func(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
 		title := req.GetString("title", "")
 
-		todo := &Todo{
+		todo := &db.Todo{
 			Title:             title,
 			Description:       req.GetString("description", ""),
 			Priority:          req.GetString("priority", ""),
@@ -45,7 +90,7 @@ func RegisterTodoTools(s *server.MCPServer, db *SQLiteDatabase) {
 			todo.Category = "personal"
 		}
 
-		if err := db.CreateTodo(todo); err != nil {
+		if err := sqlite.CreateTodo(todo); err != nil {
 			return nil, err
 		}
 		return mcp.NewToolResultText(fmt.Sprintf("Created todo: %s (ID: %d)", todo.Title, todo.ID)), nil
@@ -57,7 +102,7 @@ func RegisterTodoTools(s *server.MCPServer, db *SQLiteDatabase) {
 		mcp.WithDescription("更新现有待办事项"),
 	), func(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
 		id := req.GetFloat("id", 0)
-		todo, err := db.GetTodoByID(int(id))
+		todo, err := sqlite.GetTodoByID(int(id))
 		if err != nil {
 			return nil, fmt.Errorf("todo with ID %d not found", id)
 		}
@@ -67,7 +112,7 @@ func RegisterTodoTools(s *server.MCPServer, db *SQLiteDatabase) {
 		todo.Status = req.GetString("status", "")
 
 		todo.LastUpdated = time.Now()
-		if err := db.UpdateTodo(todo); err != nil {
+		if err := sqlite.UpdateTodo(todo); err != nil {
 			return nil, err
 		}
 		return mcp.NewToolResultText(fmt.Sprintf("Updated todo: %s (ID: %d)", todo.Title, todo.ID)), nil
@@ -80,11 +125,11 @@ func RegisterTodoTools(s *server.MCPServer, db *SQLiteDatabase) {
 	), func(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
 		idFloat := req.GetFloat("id", 0)
 		id := int(idFloat)
-		todo, err := db.GetTodoByID(id)
+		todo, err := sqlite.GetTodoByID(id)
 		if err != nil {
 			return nil, fmt.Errorf("todo with ID %d not found", id)
 		}
-		if err := db.DeleteTodo(id); err != nil {
+		if err := sqlite.DeleteTodo(id); err != nil {
 			return nil, err
 		}
 		return mcp.NewToolResultText(fmt.Sprintf("Deleted todo: %s (ID: %d)", todo.Title, todo.ID)), nil
@@ -99,7 +144,7 @@ func RegisterTodoTools(s *server.MCPServer, db *SQLiteDatabase) {
 		if analysisType == "" {
 			analysisType = "priority"
 		}
-		todos, err := db.GetAllTodos()
+		todos, err := sqlite.GetAllTodos()
 		if err != nil {
 			return nil, err
 		}
@@ -166,11 +211,11 @@ func RegisterTodoTools(s *server.MCPServer, db *SQLiteDatabase) {
 		}
 		workHours := 8
 		workHours = int(req.GetFloat("work_hours", 8))
-		todos, err := db.GetAllTodos()
+		todos, err := sqlite.GetAllTodos()
 		if err != nil {
 			return nil, err
 		}
-		var priorityTasks []Todo
+		var priorityTasks []db.Todo
 		for _, todo := range todos {
 			if (todo.Status == "pending" || todo.Status == "in_progress") &&
 				(todo.Priority == "urgent" || todo.Priority == "high") {
@@ -199,7 +244,7 @@ func RegisterTodoTools(s *server.MCPServer, db *SQLiteDatabase) {
 		if complexity == "" {
 			complexity = "medium"
 		}
-		todo, err := db.GetTodoByID(taskID)
+		todo, err := sqlite.GetTodoByID(taskID)
 		if err != nil {
 			return nil, fmt.Errorf("task with ID %d not found", taskID)
 		}

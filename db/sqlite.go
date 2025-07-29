@@ -1,4 +1,4 @@
-package main
+package db
 
 import (
 	"database/sql"
@@ -10,6 +10,50 @@ import (
 
 	_ "github.com/mattn/go-sqlite3"
 )
+
+type UserProfile struct {
+	Name         string       `json:"name"`
+	Timezone     string       `json:"timezone"`
+	WorkSchedule WorkSchedule `json:"work_schedule"`
+}
+
+type WorkSchedule struct {
+	StartTime string   `json:"start_time"`
+	EndTime   string   `json:"end_time"`
+	WorkDays  []string `json:"work_days"`
+}
+
+type Todo struct {
+	ID                int        `json:"id"`
+	Title             string     `json:"title"`
+	Description       string     `json:"description"`
+	Priority          string     `json:"priority"`
+	Status            string     `json:"status"`
+	CreatedDate       time.Time  `json:"created_date"`
+	DueDate           *time.Time `json:"due_date"`
+	LastUpdated       time.Time  `json:"last_updated"`
+	EstimatedDuration string     `json:"estimated_duration"`
+	Category          string     `json:"category"`
+}
+
+type DataStructure struct {
+	UserProfile UserProfile `json:"user_profile"`
+	Todos       []Todo      `json:"todos"`
+}
+
+type AIRequest struct {
+	Action string      `json:"action"`
+	Data   interface{} `json:"data"`
+}
+
+type AIResponse struct {
+	Success bool        `json:"success"`
+	Message string      `json:"message"`
+	Data    interface{} `json:"data"`
+}
+
+// 全局数据库实例
+var DB *SQLiteDatabase
 
 // SQLiteDatabase 使用SQLite3存储的数据库实现
 type SQLiteDatabase struct {
@@ -35,6 +79,11 @@ func NewSQLiteDatabase() (*SQLiteDatabase, error) {
 		nextID: 1,
 	}
 
+	// 导入初始数据
+	//if err := sqliteDB.ImportFromJSON("data.json"); err != nil {
+	//	log.Printf("Warning: Failed to import data from data.json: %v", err)
+	//}
+
 	// 初始化数据库表
 	if err := sqliteDB.initDatabase(); err != nil {
 		return nil, fmt.Errorf("failed to initialize database: %v", err)
@@ -42,6 +91,8 @@ func NewSQLiteDatabase() (*SQLiteDatabase, error) {
 
 	// 获取当前最大ID
 	sqliteDB.updateNextID()
+
+	DB = sqliteDB
 
 	return sqliteDB, nil
 }
