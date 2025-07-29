@@ -1,0 +1,262 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>AI智能待办助手</title>
+    <script src="https://unpkg.com/vue@3/dist/vue.global.js"></script>
+    <script src="https://unpkg.com/axios/dist/axios.min.js"></script>
+    <script src="mcp_client.js"></script>
+    <link href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.0.0/css/all.min.css" rel="stylesheet">
+    <link rel="stylesheet" href="styles.css">
+</head>
+<body>
+    <div id="app">
+        <div class="container">
+            <header class="header">
+                <h1><i class="fas fa-brain"></i> AI智能待办助手</h1>
+                <div class="user-info">
+                    <span>{{ userProfile.name }}</span>
+                    <span class="timezone">{{ userProfile.timezone }}</span>
+                </div>
+            </header>
+
+            <div class="main-content">
+                <!-- AI助手面板 -->
+                <div class="ai-panel">
+                    <h2><i class="fas fa-robot"></i> AI助手分析</h2>
+                    <div class="ai-stats" v-if="aiAnalysis">
+                        <div class="stat-card urgent" v-if="aiAnalysis.urgent_tasks && aiAnalysis.urgent_tasks.length > 0">
+                            <i class="fas fa-exclamation-triangle"></i>
+                            <div>
+                                <h3>{{ aiAnalysis.urgent_tasks.length }}</h3>
+                                <p>紧急任务</p>
+                            </div>
+                        </div>
+                        <div class="stat-card overdue" v-if="aiAnalysis.overdue_tasks && aiAnalysis.overdue_tasks.length > 0">
+                            <i class="fas fa-clock"></i>
+                            <div>
+                                <h3>{{ aiAnalysis.overdue_tasks.length }}</h3>
+                                <p>逾期任务</p>
+                            </div>
+                        </div>
+                        <div class="stat-card today" v-if="aiAnalysis.today_tasks && aiAnalysis.today_tasks.length > 0">
+                            <i class="fas fa-calendar-day"></i>
+                            <div>
+                                <h3>{{ aiAnalysis.today_tasks.length }}</h3>
+                                <p>今日任务</p>
+                            </div>
+                        </div>
+                        <div class="stat-card total">
+                            <i class="fas fa-tasks"></i>
+                            <div>
+                                <h3>{{ aiAnalysis.total_tasks }}</h3>
+                                <p>总任务数</p>
+                            </div>
+                        </div>
+                    </div>
+                    
+                    <!-- MCP AI Recommendations -->
+                    <div class="ai-recommendations" v-if="mcpConnected && aiRecommendations.length > 0">
+                        <h3><i class="fas fa-robot"></i> AI智能推荐</h3>
+                        <ul>
+                            <li v-for="rec in aiRecommendations" :key="rec">
+                                <i class="fas fa-lightbulb"></i> {{ rec }}
+                            </li>
+                        </ul>
+                    </div>
+
+                    <!-- Today's Suggestions -->
+                    <div class="ai-recommendations" v-if="mcpConnected && todaysSuggestions.length > 0">
+                        <h3><i class="fas fa-calendar-day"></i> 今日建议</h3>
+                        <ul>
+                            <li v-for="suggestion in todaysSuggestions" :key="suggestion">
+                                <i class="fas fa-star"></i> {{ suggestion }}
+                            </li>
+                        </ul>
+                    </div>
+
+                    <!-- Fallback AI Analysis -->
+                    <div class="ai-recommendations" v-if="!mcpConnected && aiAnalysis && aiAnalysis.recommendations">
+                        <h3>AI建议</h3>
+                        <ul>
+                            <li v-for="rec in aiAnalysis.recommendations" :key="rec">
+                                <i class="fas fa-lightbulb"></i> {{ rec }}
+                            </li>
+                        </ul>
+                    </div>
+
+                    <!-- AI Action Buttons -->
+                    <div class="ai-actions">
+                        <button @click="getAIAnalysis" class="ai-button" :disabled="isLoadingAI">
+                            <i class="fas fa-sync-alt" :class="{ 'fa-spin': isLoadingAI }"></i> 
+                            {{ isLoadingAI ? '分析中...' : '刷新AI分析' }}
+                        </button>
+                        
+                        <button v-if="mcpConnected" @click="optimizeMySchedule" class="ai-button" :disabled="isLoadingAI">
+                            <i class="fas fa-calendar-alt"></i> AI日程优化
+                        </button>
+                        
+                        <button v-if="mcpConnected" @click="loadAIRecommendations" class="ai-button" :disabled="isLoadingAI">
+                            <i class="fas fa-brain"></i> 获取AI建议
+                        </button>
+                    </div>
+
+                    <!-- Connection Status -->
+                    <div class="connection-status">
+                        <span v-if="mcpConnected" class="status-connected">
+                            <i class="fas fa-wifi"></i> AI助手已连接
+                        </span>
+                        <span v-else class="status-disconnected">
+                            <i class="fas fa-wifi-slash"></i> AI助手未连接
+                        </span>
+                    </div>
+                </div>
+
+                <!-- 任务管理面板 -->
+                <div class="tasks-panel">
+                    <div class="tasks-header">
+                        <h2><i class="fas fa-list-check"></i> 任务管理</h2>
+                        <button @click="showAddForm = !showAddForm" class="add-button">
+                            <i class="fas fa-plus"></i> 添加任务
+                        </button>
+                    </div>
+
+                    <!-- 添加任务表单 -->
+                    <div v-if="showAddForm" class="add-form">
+                        <h3>添加新任务</h3>
+                        <form @submit.prevent="addTodo">
+                            <input v-model="newTodo.title" placeholder="任务标题" required>
+                            <textarea v-model="newTodo.description" placeholder="任务描述"></textarea>
+                            <select v-model="newTodo.priority">
+                                <option value="low">低优先级</option>
+                                <option value="medium">中优先级</option>
+                                <option value="high">高优先级</option>
+                                <option value="urgent">紧急</option>
+                            </select>
+                            <select v-model="newTodo.category">
+                                <option value="work">工作</option>
+                                <option value="personal">个人</option>
+                                <option value="health">健康</option>
+                                <option value="financial">财务</option>
+                                <option value="household">家务</option>
+                                <option value="family">家庭</option>
+                                <option value="career">职业</option>
+                                <option value="hobby">爱好</option>
+                            </select>
+                            <input v-model="newTodo.due_date" type="datetime-local">
+                            <input v-model="newTodo.estimated_duration" placeholder="预计用时">
+                            <div class="form-buttons">
+                                <button type="submit">添加任务</button>
+                                <button type="button" @click="showAddForm = false">取消</button>
+                            </div>
+                        </form>
+                    </div>
+
+                    <!-- 任务过滤器 -->
+                    <div class="filters">
+                        <select v-model="filterStatus">
+                            <option value="">所有状态</option>
+                            <option value="pending">待处理</option>
+                            <option value="in_progress">进行中</option>
+                            <option value="completed">已完成</option>
+                            <option value="scheduled">已安排</option>
+                        </select>
+                        <select v-model="filterPriority">
+                            <option value="">所有优先级</option>
+                            <option value="urgent">紧急</option>
+                            <option value="high">高</option>
+                            <option value="medium">中</option>
+                            <option value="low">低</option>
+                        </select>
+                        <select v-model="filterCategory">
+                            <option value="">所有分类</option>
+                            <option value="work">工作</option>
+                            <option value="personal">个人</option>
+                            <option value="health">健康</option>
+                            <option value="financial">财务</option>
+                            <option value="household">家务</option>
+                        </select>
+                    </div>
+
+                    <!-- 任务列表 -->
+                    <div class="tasks-list">
+                        <div v-for="todo in filteredTodos" :key="todo.id" 
+                             :class="['task-card', todo.priority, todo.status]">
+                            <div class="task-header">
+                                <h3>{{ todo.title }}</h3>
+                                <div class="task-actions">
+                                    <button v-if="mcpConnected" @click="breakDownTask(todo)" class="ai-btn" title="AI任务分解">
+                                        <i class="fas fa-sitemap"></i>
+                                    </button>
+                                    <button @click="editTodo(todo)" class="edit-btn">
+                                        <i class="fas fa-edit"></i>
+                                    </button>
+                                    <button @click="deleteTodo(todo.id)" class="delete-btn">
+                                        <i class="fas fa-trash"></i>
+                                    </button>
+                                </div>
+                            </div>
+                            <p class="task-description">{{ todo.description }}</p>
+                            <div class="task-meta">
+                                <span class="priority">{{ getPriorityText(todo.priority) }}</span>
+                                <span class="category">{{ getCategoryText(todo.category) }}</span>
+                                <span class="status">{{ getStatusText(todo.status) }}</span>
+                                <span v-if="todo.due_date" class="due-date">
+                                    截止: {{ formatDate(todo.due_date) }}
+                                </span>
+                                <span v-if="todo.estimated_duration" class="duration">
+                                    预计: {{ todo.estimated_duration }}
+                                </span>
+                            </div>
+                            <div class="task-controls">
+                                <select @change="updateTodoStatus(todo, $event.target.value)" :value="todo.status">
+                                    <option value="pending">待处理</option>
+                                    <option value="in_progress">进行中</option>
+                                    <option value="completed">已完成</option>
+                                    <option value="scheduled">已安排</option>
+                                </select>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+
+            <!-- 编辑任务模态框 -->
+            <div v-if="editingTodo" class="modal-overlay" @click="closeEditModal">
+                <div class="modal" @click.stop>
+                    <h3>编辑任务</h3>
+                    <form @submit.prevent="updateTodo">
+                        <input v-model="editingTodo.title" placeholder="任务标题" required>
+                        <textarea v-model="editingTodo.description" placeholder="任务描述"></textarea>
+                        <select v-model="editingTodo.priority">
+                            <option value="low">低优先级</option>
+                            <option value="medium">中优先级</option>
+                            <option value="high">高优先级</option>
+                            <option value="urgent">紧急</option>
+                        </select>
+                        <select v-model="editingTodo.category">
+                            <option value="work">工作</option>
+                            <option value="personal">个人</option>
+                            <option value="health">健康</option>
+                            <option value="financial">财务</option>
+                            <option value="household">家务</option>
+                            <option value="family">家庭</option>
+                            <option value="career">职业</option>
+                            <option value="hobby">爱好</option>
+                        </select>
+                        <input v-model="editingTodo.due_date" type="datetime-local">
+                        <input v-model="editingTodo.estimated_duration" placeholder="预计用时">
+                        <div class="form-buttons">
+                            <button type="submit">更新任务</button>
+                            <button type="button" @click="closeEditModal">取消</button>
+                        </div>
+                    </form>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <script src="app.js"></script>
+</body>
+</html>
