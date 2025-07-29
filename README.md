@@ -1,12 +1,12 @@
 # MCP Todo 服务器
 
-这是一个基于MCP (Model Context Protocol) 协议的智能待办事项管理服务器，使用HTTP API而不是WebSocket协议。
+这是一个基于MCP (Model Context Protocol) 协议的智能待办事项管理服务器，使用HTTP API实现。
 
 ## 功能特性
 
 ### 🎯 核心功能
-- **内存数据库存储**: 使用内存存储，避免CGO依赖问题
-- **HTTP API**: 完全基于HTTP协议的MCP服务器实现
+- **SQLite数据库存储**: 使用SQLite3进行数据持久化
+- **HTTP API**: 完全基于HTTP协议的API实现
 - **智能分析**: AI驱动的任务分析和日程优化
 - **数据导入**: 从data.json自动导入初始数据
 
@@ -17,7 +17,6 @@
 - `delete_todo`: 删除待办事项
 - `analyze_tasks`: 智能分析任务状态
 - `optimize_schedule`: 优化工作日程
-- `break_down_task`: 将复杂任务分解为子任务
 
 ## 技术栈
 
@@ -36,14 +35,11 @@ go mod tidy
 
 ### 2. 运行服务器
 ```bash
-# 方法1: 直接运行
+# 直接运行
 go run .
-
-# 方法2: 使用启动脚本
-start.bat
 ```
 
-服务器将在 `http://localhost:8081` 启动
+服务器将在 `http://localhost:8081` 启动，MCP SSE服务器将在 `http://localhost:8082` 启动
 
 ## API端点
 
@@ -59,31 +55,49 @@ start.bat
 - `GET /api/ai/optimize` - 优化工作日程
 
 ### MCP API
-- `POST /mcp/initialize` - 初始化MCP连接
-- `GET /mcp/tools/list` - 获取可用工具列表
-- `POST /mcp/tools/call` - 调用MCP工具
+- `GET /sse` - SSE（Server-Sent Events）连接端点
+- `POST /message` - 发送消息到MCP服务器
 
 ## MCP工具调用示例
 
-### 创建待办事项
-```bash
-curl -X POST http://localhost:8081/mcp/tools/call \
-  -H "Content-Type: application/json" \
-  -d '{
-    "jsonrpc": "2.0",
-    "id": "create_todo",
-    "method": "tools/call",
-    "params": {
-      "name": "create_todo",
-      "arguments": {
-        "title": "完成项目文档",
-        "description": "编写项目技术文档",
-        "priority": "high",
-        "category": "work",
-        "estimated_duration": "2小时"
+### 连接到SSE服务器
+```javascript
+// 前端JavaScript示例
+const eventSource = new EventSource('http://localhost:8082/sse');
+
+eventSource.onmessage = (event) => {
+  const data = JSON.parse(event.data);
+  console.log('接收到消息:', data);
+};
+
+eventSource.onerror = (error) => {
+  console.error('SSE连接错误:', error);
+  eventSource.close();
+};
+```
+
+### 发送工具调用请求
+```javascript
+// 创建待办事项示例
+fetch('http://localhost:8082/message', {
+  method: 'POST',
+  headers: {
+    'Content-Type': 'application/json'
+  },
+  body: JSON.stringify({
+    type: 'call_tool',
+    content: {
+      name: 'create_todo',
+      arguments: {
+        title: '完成项目文档',
+        description: '编写项目技术文档',
+        priority: 'high',
+        category: 'work',
+        estimated_duration: '2小时'
       }
     }
-  }'
+  })
+});
 ```
 
 ### 分析任务
@@ -129,44 +143,49 @@ curl -X POST http://localhost:8081/mcp/tools/call \
 - **持久化**: 数据存储在当前目录的todos.db文件中
 
 ### 数据流程
-1. 启动时从data.json导入初始数据到SQLite数据库
+1. 启动时初始化SQLite数据库结构
 2. 所有CRUD操作通过SQLite数据库进行
-3. MCP工具调用通过HTTP API处理
+3. MCP工具调用通过SSE服务器处理
 4. 数据持久化保存在todos.db文件中
 
 ## 项目结构
 
 ```
 fydeos/
-├── main.go              # 主程序入口
-├── database_simple.go   # 内存数据库实现
-├── mcp_server.go        # MCP服务器实现
-├── database.go          # SQLite数据库实现(备用)
-├── data.json            # 初始数据
-├── start.bat            # 启动脚本
-├── go.mod               # Go模块文件
-└── README.md            # 项目说明
+├── api/                # API处理函数
+│   └── api.go           # API端点实现
+├── db/                 # 数据库相关
+│   └── sqlite.go        # SQLite数据库实现
+├── mcp/                # MCP相关
+│   └── mcp_server.go    # MCP服务器实现
+├── static/             # 静态资源目录
+├── main.go             # 主程序入口
+├── data.json           # 初始数据
+├── todos.db            # SQLite数据库文件
+├── go.mod              # Go模块文件
+├── go.sum              # Go模块依赖校验
+└── README.md           # 项目说明
 ```
 
 ## 开发说明
 
-### 主要改进
-1. **移除WebSocket**: 完全改为HTTP API实现
-2. **内存数据库**: 使用内存存储避免CGO依赖问题
-3. **数据持久化**: 所有操作都在内存中进行
-4. **MCP协议**: 实现标准的MCP协议工具
+### 主要组件
+1. **SQLite数据库**: 使用SQLite3实现数据持久化存储
+2. **REST API**: 基本的CRUD操作通过HTTP REST API实现
+3. **MCP SSE服务器**: 使用Server-Sent Events实现MCP协议
+4. **AI分析功能**: 提供智能任务分析和日程优化功能
 
 ### 关于CGO
 本项目使用SQLite数据库，需要启用CGO支持：
 1. 在Windows系统上，需要安装GCC编译器（例如通过MinGW或MSYS2）
 2. 在编译时需要设置环境变量 `CGO_ENABLED=1`
-3. 如果遇到CGO相关问题，请参考go-sqlite3文档[[1]](https://pkg.go.dev/github.com/mattn/go-sqlite3)
+3. 如果遇到CGO相关问题，请参考go-sqlite3文档：https://pkg.go.dev/github.com/mattn/go-sqlite3
 
-### 数据流程
-1. 启动时从data.json导入初始数据到内存
-2. 所有CRUD操作通过内存数据库进行
-3. MCP工具调用通过HTTP API处理
-4. 数据在程序运行期间保持在内存中
+### 技术依赖
+- **github.com/gorilla/mux**: HTTP路由处理
+- **github.com/mark3labs/mcp-go**: MCP协议Go实现
+- **github.com/mattn/go-sqlite3**: SQLite3数据库驱动
+- **github.com/rs/cors**: 跨域资源共享支持
 
 ## 许可证
 

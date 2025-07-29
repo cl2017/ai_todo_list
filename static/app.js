@@ -22,13 +22,6 @@ createApp({
                 due_date: '',
                 estimated_duration: ''
             },
-            // MCP Integration
-            mcpClient: null,
-            mcpConnected: false,
-            aiRecommendations: [],
-            todaysSuggestions: [],
-            showAIInsights: false,
-            aiInsights: null,
             isLoadingAI: false
         }
     },
@@ -43,102 +36,17 @@ createApp({
         }
     },
     methods: {
-        // MCP Integration Methods
-        async initializeMCP() {
-            try {
-                const wsUrl = `ws://${window.location.host}/mcp`;
-                this.mcpClient = new MCPClient(wsUrl);
-                
-                this.mcpClient.on('connected', () => {
-                    this.mcpConnected = true;
-                    this.showNotification('AI助手已连接', 'success');
-                    this.loadAIRecommendations();
-                    this.loadTodaysSuggestions();
-                });
-                
-                this.mcpClient.on('disconnected', () => {
-                    this.mcpConnected = false;
-                    this.showNotification('AI助手连接断开', 'error');
-                });
-                
-                this.mcpClient.on('notification', (notification) => {
-                    this.handleMCPNotification(notification);
-                });
-                
-                await this.mcpClient.connect();
-            } catch (error) {
-                console.error('MCP连接失败:', error);
-                this.showNotification('AI助手连接失败，使用基础功能', 'error');
-                // Fallback to HTTP API
-                this.fetchTodos();
-            }
-        },
-
-        handleMCPNotification(notification) {
-            // Handle real-time updates from MCP server
-            switch (notification.method) {
-                case 'todos/created':
-                    this.todos.push(notification.params);
-                    this.showNotification('任务已创建', 'success');
-                    break;
-                case 'todos/updated':
-                    const updatedIndex = this.todos.findIndex(t => t.id === notification.params.id);
-                    if (updatedIndex !== -1) {
-                        this.todos[updatedIndex] = notification.params;
-                        this.showNotification('任务已更新', 'success');
-                    }
-                    break;
-                case 'todos/deleted':
-                    this.todos = this.todos.filter(t => t.id !== notification.params.id);
-                    this.showNotification('任务已删除', 'success');
-                    break;
-            }
-        },
 
         async fetchTodos() {
             try {
-                if (this.mcpConnected && this.mcpClient) {
-                    // Use MCP to fetch todos
-                    const result = await this.mcpClient.listTodos();
-                    // Note: MCP returns analysis text, we still need HTTP API for actual data
-                    const response = await axios.get('/api/todos');
-                    this.todos = response.data || [];
-                } else {
-                    // Fallback to HTTP API
-                    const response = await axios.get('/api/todos');
-                    this.todos = response.data || [];
-                }
+                const response = await axios.get('/api/todos');
+                this.todos = response.data || [];
             } catch (error) {
                 console.error('获取任务失败:', error);
                 this.showNotification('获取任务失败', 'error');
             }
         },
 
-        // AI Intelligence Methods
-        async loadAIRecommendations() {
-            if (!this.mcpConnected || !this.mcpClient) return;
-            
-            try {
-                this.isLoadingAI = true;
-                this.aiRecommendations = await this.mcpClient.getAIRecommendations();
-            } catch (error) {
-                console.error('获取AI推荐失败:', error);
-                this.aiRecommendations = ['AI推荐暂时不可用'];
-            } finally {
-                this.isLoadingAI = false;
-            }
-        },
-
-        async loadTodaysSuggestions() {
-            if (!this.mcpConnected || !this.mcpClient) return;
-            
-            try {
-                this.todaysSuggestions = await this.mcpClient.getTodaysSuggestions();
-            } catch (error) {
-                console.error('获取今日建议失败:', error);
-                this.todaysSuggestions = ['今日建议暂时不可用'];
-            }
-        },
 
         async addTodo() {
             try {
@@ -147,30 +55,13 @@ createApp({
                     todoData.due_date = new Date(todoData.due_date).toISOString();
                 }
                 
-                let response;
-                if (this.mcpConnected && this.mcpClient) {
-                    // Use smart todo creation with AI assistance
-                    const smartResult = await this.mcpClient.createSmartTodo(todoData.title, todoData.description);
-                    this.aiInsights = smartResult.aiInsights;
-                    this.showAIInsights = true;
-                    
-                    // Still use HTTP API for actual creation to maintain consistency
-                    response = await axios.post('/api/todos', {
-                        ...todoData,
-                        priority: smartResult.aiInsights.detectedPriority,
-                        category: smartResult.aiInsights.detectedCategory,
-                        estimated_duration: smartResult.aiInsights.estimatedDuration
-                    });
-                } else {
-                    response = await axios.post('/api/todos', todoData);
-                }
-                
+                const response = await axios.post('/api/todos', todoData);
+
                 this.todos.push(response.data);
                 this.resetNewTodo();
                 this.showAddForm = false;
                 this.showNotification('任务添加成功', 'success');
                 this.getAIAnalysis(); // 刷新AI分析
-                this.loadAIRecommendations(); // 刷新AI推荐
             } catch (error) {
                 console.error('添加任务失败:', error);
                 this.showNotification('添加任务失败', 'error');
@@ -178,20 +69,11 @@ createApp({
         },
 
         async breakDownTask(todo) {
-            if (!this.mcpConnected || !this.mcpClient) {
-                this.showNotification('AI任务分解功能需要连接AI助手', 'error');
-                return;
-            }
-
             try {
                 this.isLoadingAI = true;
-                const breakdown = await this.mcpClient.breakDownTask(todo.id, 'medium');
-                
-                if (breakdown.content && breakdown.content[0]) {
-                    // Show breakdown in a modal or notification
-                    const breakdownText = breakdown.content[0].text;
-                    this.showTaskBreakdown(todo.title, breakdownText);
-                }
+                // 使用简单的本地分解逻辑
+                const subtasks = this.generateSubtasks(todo);
+                this.showTaskBreakdown(todo.title, subtasks);
             } catch (error) {
                 console.error('任务分解失败:', error);
                 this.showNotification('任务分解失败', 'error');
@@ -200,14 +82,25 @@ createApp({
             }
         },
 
-        showTaskBreakdown(taskTitle, breakdown) {
+        showTaskBreakdown(taskTitle, subtasks) {
+            // 创建子任务列表的HTML
+            const subtasksHtml = subtasks.map(task => 
+                `<div class="subtask">
+                    <h4>${task.title}</h4>
+                    <p>${task.description}</p>
+                    <p>预计时间: ${task.estimated_duration}</p>
+                </div>`
+            ).join('');
+
             // Create a modal to show task breakdown
             const modal = document.createElement('div');
             modal.className = 'modal-overlay';
             modal.innerHTML = `
                 <div class="modal" style="max-width: 600px;">
                     <h3>任务分解: ${taskTitle}</h3>
-                    <pre style="white-space: pre-wrap; font-family: inherit; margin: 20px 0;">${breakdown}</pre>
+                    <div style="margin: 20px 0;">
+                        ${subtasksHtml || '<p>无法为此任务生成子任务</p>'}
+                    </div>
                     <div class="form-buttons">
                         <button onclick="this.closest('.modal-overlay').remove()">关闭</button>
                     </div>
@@ -217,40 +110,45 @@ createApp({
         },
 
         async optimizeMySchedule() {
-            if (!this.mcpConnected || !this.mcpClient) {
-                this.showNotification('AI日程优化功能需要连接AI助手', 'error');
-                return;
-            }
-
             try {
                 this.isLoadingAI = true;
-                const optimization = await this.mcpClient.optimizeSchedule('today', 8);
-                
-                if (optimization.content && optimization.content[0]) {
-                    const optimizationText = optimization.content[0].text;
-                    this.showScheduleOptimization(optimizationText);
-                }
+                const response = await axios.get('/api/ai/optimize');
+                const optimization = response.data;
+
+                // 显示日程优化建议
+                const modal = document.createElement('div');
+                modal.className = 'modal-overlay';
+                modal.innerHTML = `
+                    <div class="modal" style="max-width: 600px;">
+                        <h3>日程优化建议</h3>
+                        <div style="margin: 20px 0;">
+                            <h4>建议任务顺序:</h4>
+                            <ul>
+                                ${optimization.optimized_tasks.map(task => 
+                                    `<li>${task.title} (${this.getPriorityText(task.priority)})</li>`
+                                ).join('')}
+                            </ul>
+                            <h4>优化提示:</h4>
+                            <ul>
+                                ${optimization.schedule_advice.map(advice => 
+                                    `<li>${advice}</li>`
+                                ).join('')}
+                            </ul>
+                        </div>
+                        <div class="form-buttons">
+                            <button onclick="this.closest('.modal-overlay').remove()">关闭</button>
+                        </div>
+                    </div>
+                `;
+                document.body.appendChild(modal);
+
+                this.showNotification('日程优化建议已生成', 'success');
             } catch (error) {
                 console.error('日程优化失败:', error);
                 this.showNotification('日程优化失败', 'error');
             } finally {
                 this.isLoadingAI = false;
             }
-        },
-
-        showScheduleOptimization(optimization) {
-            const modal = document.createElement('div');
-            modal.className = 'modal-overlay';
-            modal.innerHTML = `
-                <div class="modal" style="max-width: 600px;">
-                    <h3>AI日程优化建议</h3>
-                    <pre style="white-space: pre-wrap; font-family: inherit; margin: 20px 0;">${optimization}</pre>
-                    <div class="form-buttons">
-                        <button onclick="this.closest('.modal-overlay').remove()">关闭</button>
-                    </div>
-                </div>
-            `;
-            document.body.appendChild(modal);
         },
 
         async updateTodo() {
@@ -507,23 +405,12 @@ createApp({
     },
 
     async mounted() {
-        // Initialize MCP connection first
-        await this.initializeMCP();
-        
-        // Fallback to HTTP API if MCP fails
-        if (!this.mcpConnected) {
-            await this.fetchTodos();
-            await this.getAIAnalysis();
-        } else {
-            await this.fetchTodos();
-        }
-        
-        // 定期刷新AI分析和推荐
+        // 获取待办事项和AI分析
+        await this.fetchTodos();
+        await this.getAIAnalysis();
+
+        // 定期刷新AI分析
         setInterval(() => {
-            if (this.mcpConnected) {
-                this.loadAIRecommendations();
-                this.loadTodaysSuggestions();
-            }
             this.getAIAnalysis();
         }, 300000); // 每5分钟刷新一次
         

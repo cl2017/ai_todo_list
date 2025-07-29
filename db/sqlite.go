@@ -85,9 +85,9 @@ func NewSQLiteDatabase() (*SQLiteDatabase, error) {
 	//}
 
 	// 初始化数据库表
-	if err := sqliteDB.initDatabase(); err != nil {
-		return nil, fmt.Errorf("failed to initialize database: %v", err)
-	}
+	//if err := sqliteDB.initDatabase(); err != nil {
+	//	return nil, fmt.Errorf("failed to initialize database: %v", err)
+	//}
 
 	// 获取当前最大ID
 	sqliteDB.updateNextID()
@@ -242,7 +242,7 @@ func (d *SQLiteDatabase) ImportFromJSON(filename string) error {
 // CRUD 操作
 func (d *SQLiteDatabase) GetAllTodos() ([]Todo, error) {
 	rows, err := d.db.Query(
-		"SELECT id, title, description, priority, status, created_date, due_date, last_updated, estimated_duration, category FROM todos",
+		"SELECT id, title, description, priority, status, created_date, due_date, last_updated, estimated_duration, category FROM todos ORDER BY created_date DESC, CASE priority WHEN 'urgent' THEN 1 WHEN 'high' THEN 2 WHEN 'medium' THEN 3 WHEN 'low' THEN 4 END",
 	)
 	if err != nil {
 		return nil, fmt.Errorf("failed to query todos: %v", err)
@@ -281,26 +281,6 @@ func (d *SQLiteDatabase) GetAllTodos() ([]Todo, error) {
 
 	if err := rows.Err(); err != nil {
 		return nil, fmt.Errorf("error iterating todos rows: %v", err)
-	}
-
-	// 按优先级和截止日期排序
-	priorityOrder := map[string]int{
-		"urgent": 1,
-		"high":   2,
-		"medium": 3,
-		"low":    4,
-	}
-
-	for i := 0; i < len(todos)-1; i++ {
-		for j := i + 1; j < len(todos); j++ {
-			pi := priorityOrder[todos[i].Priority]
-			pj := priorityOrder[todos[j].Priority]
-
-			if pi > pj || (pi == pj && todos[i].DueDate != nil && todos[j].DueDate != nil &&
-				todos[i].DueDate.After(*todos[j].DueDate)) {
-				todos[i], todos[j] = todos[j], todos[i]
-			}
-		}
 	}
 
 	return todos, nil
